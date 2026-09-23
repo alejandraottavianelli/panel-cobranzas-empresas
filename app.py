@@ -29,7 +29,7 @@ with tab1:
             st.rerun()
     with col2:
         if not df.empty:
-            st.success(f"¡Sincronización Exitosa! Facturas cargadas: {len(df)}")
+            st.success(f"¡Sincronización Exitosa! Facturas vivas cargadas: {len(df)}")
         else:
             st.warning("No se obtuvieron registros o la API está reconectando...")
 
@@ -51,29 +51,29 @@ with tab2:
         if 'cliente' in df.columns and 'balance' in df.columns:
             resumen = df.groupby('cliente')[['total', 'balance']].sum().reset_index()
             st.dataframe(resumen, use_container_width=True)
-    else:
-        st.info("Cargando métricas desde el Orquestador...")
 
 # --- PESTAÑA 3: RUTA DE COBRANZAS & CRM ---
 with tab3:
-    st.subheader("📋 Ruta de Cobranzas & CRM con Semáforo")
+    st.subheader("📋 Ruta de Cobranzas & CRM con Semáforo de Pagos Reales")
     
     if not df.empty:
         df_crm = df.copy()
-        fecha_col = 'last_update_date' if 'last_update_date' in df_crm.columns else 'fecha_comprobante'
         
-        # Aplicación segura de la función semáforo
-        if fecha_col in df_crm.columns:
-            df_crm['Semáforo'] = df_crm[fecha_col].apply(calcular_semaforo)
+        # Calcular semáforo según la fecha del último cobro registrado en Interbanking
+        df_crm['Semáforo'] = df_crm['fecha_ultimo_cobro'].apply(calcular_semaforo) if 'fecha_ultimo_cobro' in df_crm.columns else "🔴 +15 días"
+        
+        # Formatear la fecha visible de último cobro
+        if 'fecha_ultimo_cobro' in df_crm.columns:
+            df_crm['Último Cobro'] = pd.to_datetime(df_crm['fecha_ultimo_cobro']).dt.strftime('%Y-%m-%d').fillna('Sin registros')
         else:
-            df_crm['Semáforo'] = "🔴 +15 días"
-        
+            df_crm['Último Cobro'] = 'Sin registros'
+
         # Columnas CRM editables
         df_crm['Estado Contacto'] = "Sin contactar"
         df_crm['Observación'] = ""
         df_crm['Promesa de Pago'] = None
 
-        columnas_mostrar = [c for c in ['cliente', 'id_fiscal', 'comprobante', 'total', 'balance', 'Semáforo', 'Estado Contacto', 'Observación', 'Promesa de Pago'] if c in df_crm.columns]
+        columnas_mostrar = [c for c in ['cliente', 'id_fiscal', 'comprobante', 'total', 'balance', 'Último Cobro', 'Semáforo', 'Estado Contacto', 'Observación', 'Promesa de Pago'] if c in df_crm.columns]
 
         edited_df = st.data_editor(
             df_crm[columnas_mostrar],
@@ -83,6 +83,7 @@ with tab3:
                 "comprobante": "Factura",
                 "total": "Total Facturado",
                 "balance": "Saldo Pendiente",
+                "Último Cobro": "Fecha Último Pago",
                 "Semáforo": "Estado Pago",
                 "Estado Contacto": st.column_config.SelectboxColumn(
                     "Estado Contacto",
@@ -102,8 +103,6 @@ with tab3:
             file_name="Copia_Seguridad_Cobranzas.csv",
             mime="text/csv"
         )
-    else:
-        st.info("Aguardando datos del Orquestador...")
 
 # --- PESTAÑA 4: ALERTAS ---
 with tab4:
@@ -112,5 +111,3 @@ with tab4:
         top_deudores = df.groupby('cliente')['balance'].sum().reset_index().sort_values(by='balance', ascending=False).head(10)
         st.write("Top 10 Empresas con Mayor Saldo Pendiente:")
         st.bar_chart(top_deudores.set_index('cliente'))
-    else:
-        st.info("Sin datos para generar gráficos de Cash Flow...")

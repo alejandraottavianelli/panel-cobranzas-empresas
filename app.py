@@ -6,7 +6,6 @@ st.set_page_config(page_title="Panel de Cobranzas Empresas", layout="wide")
 
 st.title("📊 Conciliación & Ruta de Cobranzas - Cartera Empresas")
 
-# Obtención de datos principal
 @st.cache_data(ttl=300)
 def cargar_datos():
     return obtener_datos_orquestador()
@@ -30,7 +29,7 @@ with tab1:
             st.rerun()
     with col2:
         if not df.empty:
-            st.success(f"¡Sincronización Exitosa! Registros cargados: {len(df)}")
+            st.success(f"¡Sincronización Exitosa! Facturas cargadas: {len(df)}")
         else:
             st.warning("No se obtuvieron registros o la API está reconectando...")
 
@@ -62,7 +61,12 @@ with tab3:
     if not df.empty:
         df_crm = df.copy()
         fecha_col = 'last_update_date' if 'last_update_date' in df_crm.columns else 'fecha_comprobante'
-        df_crm['Semáforo'] = df_crm[fecha_col].apply(calcular_semaforo) if fecha_col in df_crm.columns else "🔴 +15 días"
+        
+        # Aplicación segura de la función semáforo
+        if fecha_col in df_crm.columns:
+            df_crm['Semáforo'] = df_crm[fecha_col].apply(calcular_semaforo)
+        else:
+            df_crm['Semáforo'] = "🔴 +15 días"
         
         # Columnas CRM editables
         df_crm['Estado Contacto'] = "Sin contactar"
@@ -101,7 +105,7 @@ with tab3:
     else:
         st.info("Aguardando datos del Orquestador...")
 
-# --- PESTAÑA 4: ALERTAS & CASH FLOW ---
+# --- PESTAÑA 4: ALERTAS ---
 with tab4:
     st.subheader("🔔 Alertas de Cobranza & Ranking de Deudores")
     if not df.empty and 'cliente' in df.columns and 'balance' in df.columns:

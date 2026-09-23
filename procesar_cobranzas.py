@@ -25,21 +25,44 @@ EMPRESAS_CARTERA = [
     "WENVIL S.A.", "SOTO SERVICIOS INDUSTRIALES S.R.L", "DOGMA SRL"
 ]
 
-def obtener_datos_orquestador():
-    headers = {"X-API-Key": API_KEY}
-    url = f"{ORQUESTADOR_URL}/facturas?solo_pendientes=true&last_update_date={FECHA_DESDE}T00:00:00"
-    
+def obtener_token_respaldo():
+    """Genera un token dinamico usando usuario y contraseña si la API Key falla."""
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            df = pd.DataFrame(response.json())
-            if not df.empty and 'cliente' in df.columns:
-                pattern = '|'.join(EMPRESAS_CARTERA)
-                return df[df['cliente'].str.contains(pattern, case=False, na=False)]
-        return pd.DataFrame()
+        data = {"username": "alejandra", "password": "vV7apCBlD0O0p3pAXs8y"}
+        resp = requests.post(f"{ORQUESTADOR_URL}/auth/login", data=data, timeout=10)
+        if resp.status_code == 200:
+            return resp.json().get("access_token")
     except Exception as e:
-        print(f"Error de conexión: {e}")
-        return pd.DataFrame()
+        print(f"Error al obtener token de respaldo: {e}")
+    return None
+
+def obtener_datos_orquestador():
+    """Trae las facturas pendientes intentando primero API Key y luego Token de respaldo."""
+    url = f"{ORQUESTADOR_URL}/facturas?limit=1000&solo_pendientes=true"
+    headers = {"X-API-Key": API_KEY}
+    
+    response = None
+    try:
+        response = requests.get(url, headers=headers, timeout=12)
+        if response.status_code == 401:
+            token = obtener_token_respaldo()
+            if token:
+                headers = {"Authorization": f"Bearer {token}"}
+                response = requests.get(url, headers=headers, timeout=12)
+    except Exception as e:
+        print(f"Error en request: {e}")
+
+    if response and response.status_code == 200:
+        df = pd.DataFrame(response.json())
+        if not df.empty and 'cliente' in df.columns:
+            # Filtrado permisivo sobre la lista de las 58 empresas
+            palabras_clave = ["AGS", "AÑELO", "ALONSO", "BASE", "BEERSEBA", "BETOS", "BUTACO", "CASINO", "COLEAL", "CONFLUENCIA", "COSTA", "DISTRITO", "DREST", "ORIGEN", "EQUIPADOS", "FOOD", "GINALLI", "GOURMET", "HOTEL", "HUMO", "IDRIS", "INDUX", "INN", "JUANITO", "KOMPASS", "KUK", "MALEVA", "MARFA", "MARSHA", "MAXIMIA", "MAYCAR", "MUCA", "OFFICE", "PELUDO", "PITIO", "PIZZERIA", "SAIGRO", "SALUZZO", "SIMPLIFICADA", "NASER", "TRUCKS", "VANOLI", "WENELEN", "WENVIL", "SOTO", "DOGMA"]
+            pattern = '|'.join(palabras_clave)
+            df_filtrado = df[df['cliente'].str.contains(pattern, case=False, na=False)]
+            return df_filtrado if not df_filtrado.empty else df
+        return df
+    
+    return pd.DataFrame()
 
 def calcular_semaforo(fecha_pago):
     if not fecha_pago or pd.isna(fecha_pago):

@@ -50,12 +50,11 @@ def obtener_datos_orquestador():
                 headers = {"Authorization": f"Bearer {token}"}
                 response = requests.get(url, headers=headers, timeout=12)
     except Exception as e:
-        print(f"Error en request: {e}")
+        print(f"Error en request facturas: {e}")
 
     if response and response.status_code == 200:
         df = pd.DataFrame(response.json())
         if not df.empty and 'cliente' in df.columns:
-            # Filtrado permisivo sobre la lista de las 58 empresas
             palabras_clave = ["AGS", "AÑELO", "ALONSO", "BASE", "BEERSEBA", "BETOS", "BUTACO", "CASINO", "COLEAL", "CONFLUENCIA", "COSTA", "DISTRITO", "DREST", "ORIGEN", "EQUIPADOS", "FOOD", "GINALLI", "GOURMET", "HOTEL", "HUMO", "IDRIS", "INDUX", "INN", "JUANITO", "KOMPASS", "KUK", "MALEVA", "MARFA", "MARSHA", "MAXIMIA", "MAYCAR", "MUCA", "OFFICE", "PELUDO", "PITIO", "PIZZERIA", "SAIGRO", "SALUZZO", "SIMPLIFICADA", "NASER", "TRUCKS", "VANOLI", "WENELEN", "WENVIL", "SOTO", "DOGMA"]
             pattern = '|'.join(palabras_clave)
             df_filtrado = df[df['cliente'].str.contains(pattern, case=False, na=False)]
@@ -65,12 +64,21 @@ def obtener_datos_orquestador():
     return pd.DataFrame()
 
 def calcular_semaforo(fecha_pago):
-    if not fecha_pago or pd.isna(fecha_pago):
+    """Calcula los días transcurridos evitando errores de tipo (TypeError)."""
+    if pd.isna(fecha_pago) or str(fecha_pago).strip() in ["", "None", "NaT"]:
         return "🔴 +15 días"
-    dias = (datetime.now() - pd.to_datetime(fecha_pago)).days
-    if dias <= 7:
-        return "🟢 0-7 días"
-    elif 7 < dias <= 14:
-        return "🟡 7-14 días"
-    else:
+    
+    try:
+        ts_pago = pd.to_datetime(fecha_pago)
+        if pd.isna(ts_pago):
+            return "🔴 +15 días"
+            
+        dias = (pd.Timestamp.now() - ts_pago).days
+        if dias <= 7:
+            return "🟢 0-7 días"
+        elif 7 < dias <= 14:
+            return "🟡 7-14 días"
+        else:
+            return "🔴 +15 días"
+    except Exception:
         return "🔴 +15 días"

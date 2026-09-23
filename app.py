@@ -1,32 +1,66 @@
 import streamlit as st
 import pandas as pd
-from procesar_cobranzas import procesar_panel_cobranzas
+from procesar_cobranzas import obtener_datos_orquestador, calcular_semaforo
 
-st.set_page_config(page_title="Panel de Cobranzas", layout="wide")
+st.set_page_config(page_title="Panel de Cobranzas Empresas", layout="wide")
 
-st.title("📊 Panel de Cobranzas y Cuentas Corrientes - Empresas")
+st.title("📊 Conciliación & Ruta de Cobranzas - Cartera Empresas")
 
-# Módulo de Carga de Archivos desde la pantalla web
-st.sidebar.header("📁 Cargar Datos de Finnegans")
-f_facturas = st.sidebar.file_uploader("Facturas empresas.xlsx", type=["xlsx"])
-f_cobranzas = st.sidebar.file_uploader("Cobranzas empresas.xlsx", type=["xlsx"])
-f_limite = st.sidebar.file_uploader("Limite de Credito.xlsx", type=["xlsx"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "1. Cargar Archivos & Sincronización", 
+    "2. Resumen Ejecutivo", 
+    "3. Ruta de Cobranzas & CRM", 
+    "4. Alertas & Cash Flow"
+])
 
-if f_facturas and f_cobranzas and f_limite:
-    df = procesar_panel_cobranzas(f_facturas, f_cobranzas, f_limite)
+with tab1:
+    st.subheader("Conexión con Orquestador API")
+    if st.button("🔄 Sincronizar Datos en Vivo"):
+        st.cache_data.clear()
+        st.success("¡Datos actualizados desde el Orquestador!")
 
-    # Tarjetas KPI
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Deuda Total Pendiente", f"${df['Deuda_Total'].sum():,.2f}")
-    col2.metric("Deuda Vencida", f"${df['Deuda_Vencida'].sum():,.2f}")
-    col3.metric("Facturas Pendientes", int(df['Facturas_Pendientes'].sum()))
-    col4.metric("Empresas en Cartera", len(df))
+with tab3:
+    st.subheader("Ruta de Cobranzas & Seguimiento con Semáforo")
+    
+    df = obtener_datos_orquestador()
+    
+    if not df.empty:
+        df['Semáforo'] = df['last_update_date'].apply(calcular_semaforo)
+        
+        # Columnas de gestión CRM editables
+        if 'Estado Contacto' not in df.columns:
+            df['Estado Contacto'] = "Sin contactar"
+        if 'Observación' not in df.columns:
+            df['Observación'] = ""
+        if 'Promesa de Pago' not in df.columns:
+            df['Promesa de Pago'] = None
 
-    st.markdown("---")
+        edited_df = st.data_editor(
+            df[['cliente', 'id_fiscal', 'comprobante', 'total', 'balance', 'Semáforo', 'Estado Contacto', 'Observación', 'Promesa de Pago']],
+            column_config={
+                "cliente": "Empresa",
+                "id_fiscal": "CUIT",
+                "comprobante": "Factura",
+                "total": "Total Facturado",
+                "balance": "Saldo Pendiente",
+                "Semáforo": "Estado Pago",
+                "Estado Contacto": st.column_config.SelectboxColumn(
+                    "Estado Contacto",
+                    options=["Sin contactar", "Se llamó", "Mail enviado", "Promesa de pago"],
+                    required=True
+                ),
+                "Observación": st.column_config.TextColumn("Última Observación", width="large"),
+                "Promesa de Pago": st.column_config.DateColumn("Fecha Promesa")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
 
-    # Tabla interactiva
-    st.subheader("📋 Estado de Cuentas por Empresa")
-    st.dataframe(df, use_container_width=True)
-
-else:
-    st.info("👈 Por favor, carga los 3 archivos de Finnegans en el menú lateral para ver el panel.")
+        st.download_button(
+            label="💾 Exportar Copia de Seguridad con Anotaciones (Excel/CSV)",
+            data=edited_df.to_csv(index=False).encode('utf-8'),
+            file_name="Copia_Seguridad_Cobranzas.csv",
+            mime="text/csv"
+        )
+    else:
+        st.info("Hacé clic en Sincronizar o aguardá la carga de datos del Orquestador...")

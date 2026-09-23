@@ -1,113 +1,53 @@
+import requests
 import pandas as pd
-import datetime
+from datetime import datetime
 
-def buscar_columna(df, posibles_nombres):
-    """Busca una columna en el DataFrame ignorando mayúsculas, minúsculas y espacios."""
-    cols_lower = {str(col).strip().lower(): col for col in df.columns}
-    for nombre in posibles_nombres:
-        n_clean = nombre.strip().lower()
-        if n_clean in cols_lower:
-            return cols_lower[n_clean]
-    return None
+ORQUESTADOR_URL = "https://orquestador.senderosderaza.com.ar/api/v1"
+API_KEY = "sr_f23256ffa63cc4257efa077fc4efbc129525e9272a8b39bfbfd88e7c0c286266"
+FECHA_DESDE = "2026-08-01"
 
-def procesar_panel_cobranzas(file_facturas, file_cobranzas, file_limite, df_contactos=None):
-    df_facturas = pd.read_excel(file_facturas)
-    df_cobranzas = pd.read_excel(file_cobranzas)
-    df_limite = pd.read_excel(file_limite)
+# Las 58 empresas de tu cartera
+EMPRESAS_CARTERA = [
+    "ALONSO LUIS SEBASTIAN", "AGS S.R.L", "AÑELO FOODS AND DRINKS S.A.S", "BASE 2 SRL",
+    "BEERSEBA SRL", "BETOS LOMOS (CHIARO SRL)", "BIGNERT, CESAR ADRIAN,JULIO Y DANIEL",
+    "BUTACO SRL", "CASINO MAGIC NEUQUEN S.A", "COLEAL SOCIEDAD ANONIMA", "CONFLUENCIA DE SABORES SAS",
+    "CONSEJO PROVINCIAL DE EDUCACION DEL NQN", "COSTA NQN SRL", "DISTRITO 220 S.R.L",
+    "DREST EMPRENDIMIENTOS S.A", "EL ORIGEN BEER HOUSE SRL", "EL RINCON DE PIEDRA DEL AGUILA SRL",
+    "EPICURO SMA S.A.S.", "EQUIPADOS SAS", "FCH S. A. S.", "FOOD SERVICE S.A.",
+    "GARCIA OTERO ESTEBAN JAVIER", "GINALLI SRL", "GOURMET LAB S.A.S.", "HOTEL LAND EXPRESS",
+    "HUMO SAPIENS S.R.L.", "IDRIS PATAGONIA SA", "INDUX S.A.", "INN S.A.", "JUANITO SRL",
+    "KOMPASS SRL", "KUK S.A.S.", "LA MALEVA SMA", "LUIS ARCEO SRL", "LUNCH S.A.S",
+    "MARFA S.R.L", "MARSHA S.R.L", "MAXIMIA SA", "MAYCAR SOCIEDAD ANONIMA", "MUCA S.A.S",
+    "OFFICE GOURMET", "PELUDO BARFERO S. A. S.", "PITIO S.A", "PIZZERIA POPULAR PATAGONIA S.A.S",
+    "R.C. ALBA S.G. S. A. S.", "REYMON SOCIAL CLUB S.A.S", "RYM.COM S.A.S.", "SAIGRO S.A",
+    "SALUZZO S.R.L", "SIMPLIFICADA", "SERVICIOS NASER SRL", "TRUCKS VIAL SAS",
+    "V&D SOCIEDAD DE RESPONSABILIDAD LIMITADA", "VANOLI & DURAND SRL", "WENELEN (ADMINVER S.A)",
+    "WENVIL S.A.", "SOTO SERVICIOS INDUSTRIALES S.R.L", "DOGMA SRL"
+]
+
+def obtener_datos_orquestador():
+    headers = {"X-API-Key": API_KEY}
+    url = f"{ORQUESTADOR_URL}/facturas?solo_pendientes=true&last_update_date={FECHA_DESDE}T00:00:00"
     
-    # 1. Normalizar columna 'Cliente' / 'Organización'
-    for df in [df_facturas, df_cobranzas, df_limite]:
-        col_cliente = buscar_columna(df, ['Cliente', 'Organización', 'Organizacion', 'Cuenta corriente', 'Razon Social'])
-        if col_cliente:
-            df.rename(columns={col_cliente: 'Cliente'}, inplace=True)
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        if response.status_code == 200:
+            df = pd.DataFrame(response.json())
+            if not df.empty and 'cliente' in df.columns:
+                pattern = '|'.join(EMPRESAS_CARTERA)
+                return df[df['cliente'].str.contains(pattern, case=False, na=False)]
+        return pd.DataFrame()
+    except Exception as e:
+        print(f"Error de conexión: {e}")
+        return pd.DataFrame()
 
-    # 2. Identificar columnas clave en Facturas
-    col_venc = buscar_columna(df_facturas, ['Vencimiento', 'Fecha vencimiento', 'Fecha de vencimiento', 'F.Vencimiento'])
-    col_saldo = buscar_columna(df_facturas, ['Saldo', 'Saldo pendiente', 'Importe saldo', 'Total', 'Importe total'])
-    col_numero = buscar_columna(df_facturas, ['Número', 'Numero', 'Nro', 'Comprobante'])
-
-    # Convertir fechas y saldos numéricos
-    if col_venc:
-        df_facturas['Vencimiento'] = pd.to_datetime(df_facturas[col_venc], errors='coerce')
+def calcular_semaforo(fecha_pago):
+    if not fecha_pago or pd.isna(fecha_pago):
+        return "🔴 +15 días"
+    dias = (datetime.now() - pd.to_datetime(fecha_pago)).days
+    if dias <= 7:
+        return "🟢 0-7 días"
+    elif 7 < dias <= 14:
+        return "🟡 7-14 días"
     else:
-        df_facturas['Vencimiento'] = pd.NaT
-
-    if col_saldo:
-        # Limpieza de valores numéricos si vienen como texto
-        df_facturas['Saldo'] = df_facturas[col_saldo].astype(str).str.replace('$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df_facturas['Saldo'] = pd.to_numeric(df_facturas['Saldo'], errors='coerce').fillna(0)
-    else:
-        df_facturas['Saldo'] = 0
-
-    df_facturas['Número'] = df_facturas[col_numero] if col_numero else 1
-
-    # 3. Identificar columnas en Cobranzas
-    col_fecha_cob = buscar_columna(df_cobranzas, ['Fecha', 'Fecha cobranza', 'Fecha de pago'])
-    col_total_cob = buscar_columna(df_cobranzas, ['Total', 'Importe', 'Monto'])
-
-    if col_fecha_cob:
-        df_cobranzas['Fecha'] = pd.to_datetime(df_cobranzas[col_fecha_cob], errors='coerce')
-    else:
-        df_cobranzas['Fecha'] = pd.NaT
-
-    if col_total_cob:
-        df_cobranzas['Total'] = df_cobranzas[col_total_cob].astype(str).str.replace('$', '', regex=False).str.replace('.', '', regex=False).str.replace(',', '.', regex=False)
-        df_cobranzas['Total'] = pd.to_numeric(df_cobranzas['Total'], errors='coerce').fillna(0)
-    else:
-        df_cobranzas['Total'] = 0
-
-    hoy = pd.to_datetime(datetime.date.today())
-    
-    # 4. Agrupación por Cliente
-    # Si hay saldos mayores a 0, toma esos; si no, procesa todas las facturas del archivo
-    df_pendientes = df_facturas[df_facturas['Saldo'] > 0] if (df_facturas['Saldo'] > 0).any() else df_facturas
-    
-    resumen_facturas = df_pendientes.groupby('Cliente').agg(
-        Deuda_Total=('Saldo', 'sum'),
-        Facturas_Pendientes=('Número', 'count')
-    ).reset_index()
-    
-    # Deuda Vencida
-    df_vencidas = df_pendientes[df_pendientes['Vencimiento'] < hoy]
-    if not df_vencidas.empty:
-        resumen_vencidas = df_vencidas.groupby('Cliente').agg(
-            Deuda_Vencida=('Saldo', 'sum')
-        ).reset_index()
-    else:
-        resumen_vencidas = pd.DataFrame(columns=['Cliente', 'Deuda_Vencida'])
-    
-    # 5. Último Pago
-    if not df_cobranzas.empty and 'Fecha' in df_cobranzas.columns:
-        df_cobranzas_ord = df_cobranzas.sort_values(by=['Cliente', 'Fecha'], ascending=[True, False])
-        ultimo_pago = df_cobranzas_ord.groupby('Cliente').first().reset_index()
-        ultimo_pago = ultimo_pago[['Cliente', 'Fecha', 'Total']].rename(
-            columns={'Fecha': 'Fecha_Ultimo_Pago', 'Total': 'Monto_Ultimo_Pago'}
-        )
-        ultimo_pago['Fecha_Ultimo_Pago'] = ultimo_pago['Fecha_Ultimo_Pago'].dt.strftime('%Y-%m-%d')
-    else:
-        ultimo_pago = pd.DataFrame(columns=['Cliente', 'Fecha_Ultimo_Pago', 'Monto_Ultimo_Pago'])
-    
-    # 6. Condición de Venta y Límite
-    cols_limite = [c for c in ['Condición de venta', 'Límite de crédito'] if c in df_limite.columns]
-    resumen_limite = df_limite[['Cliente'] + cols_limite].drop_duplicates('Cliente') if cols_limite else pd.DataFrame(columns=['Cliente'])
-    
-    # 7. Consolidar
-    consolidado = pd.merge(resumen_facturas, resumen_vencidas, on='Cliente', how='left')
-    consolidado['Deuda_Vencida'] = consolidado['Deuda_Vencida'].fillna(0)
-    consolidado = pd.merge(consolidado, ultimo_pago, on='Cliente', how='left')
-    consolidado = pd.merge(consolidado, resumen_limite, on='Cliente', how='left')
-    
-    def calcular_semaforo(row):
-        if row['Deuda_Vencida'] > 0:
-            return '🔴 Vencido'
-        elif row['Deuda_Total'] > 0:
-            return '🟡 En Seguimiento'
-        else:
-            return '🟢 Al Día'
-            
-    consolidado['Estado'] = consolidado.apply(calcular_semaforo, axis=1)
-    
-    if df_contactos is not None and not df_contactos.empty:
-        consolidado = pd.merge(consolidado, df_contactos, on='Cliente', how='left')
-        
-    return consolidado
+        return "🔴 +15 días"
